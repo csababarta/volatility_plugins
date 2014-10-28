@@ -1052,6 +1052,10 @@ class malprocfind(common.AbstractWindowsCommand):
                           cache_invalidator = False,
                           short_option = 'x',
                           help = 'Consider exited processes as well')
+        config.add_option("INCLALL", default = 0, action = 'count',
+                          cache_invalidator = False,
+                          short_option = 'a',
+                          help = 'Include all running processes')
 
     # Checks the process name
     def check_proc_name(self, process, defaults):
@@ -1068,12 +1072,10 @@ class malprocfind(common.AbstractWindowsCommand):
             return True
         
         if process.Peb == None:
-            print "Warning! It wasn't possible to complete the process path check! PID: %d Offset: 0x%x Name: %s" % (int(process.UniqueProcessId), int(process.obj_offset), str(process.ImageFileName))
-            return False
+            return None
         
         if process.Peb.ProcessParameters == None:
-            print "Warning! It wasn't possible to complete the process path check! PID: %d Offset: 0x%x Name: %s" % (int(process.UniqueProcessId), int(process.obj_offset), str(process.ImageFileName))
-            return False
+            return None
         
         ok = False
         for p in defaults['path']:
@@ -1116,6 +1118,10 @@ class malprocfind(common.AbstractWindowsCommand):
 
     # Checks the process priority
     def check_proc_priority(self, process, defaults):
+        if process.Pcb == None or \
+           process.Pcb.BasePriority == None:
+            return None
+
         prio = process.Pcb.BasePriority
         res = eval(defaults['priority'])
         return res
@@ -1125,9 +1131,10 @@ class malprocfind(common.AbstractWindowsCommand):
         if defaults['cmdline'] == None and str(process.ImageFileName).lower() == "system":
             return True
         
-        if process.Peb == None:
-            print "Warning! It wasn't possible to complete the process commandline check! PID: %d Offset: 0x%x Name: %s" % (int(process.UniqueProcessId), int(process.obj_offset), str(process.ImageFileName))
-            return False
+        if process.Peb == None or \
+           process.Peb.ProcessParameters == None or \
+           process.Peb.ProcessParameters.CommandLine == None:
+            return None
 
         cmdline = str(process.Peb.ProcessParameters.CommandLine).lower().strip()
         
@@ -1151,14 +1158,17 @@ class malprocfind(common.AbstractWindowsCommand):
         if p_sess > 0:
             session = obj.Object('_MM_SESSION_SPACE', process.Session, utils.load_as(self._config))
         
+        if session == None:
+            return None
+        
         sessid = -1
-        if session != None:
-            sessid = session.SessionId
+        sessid = session.SessionId
         
         # in windows XP and Server 2003 there is no session isolation
         if process.obj_native_vm.profile.metadata['major'] == 5 and \
            sessid == 0:
             return True
+        
         res = eval(defaults['session'])
         return res
 
@@ -1170,7 +1180,7 @@ class malprocfind(common.AbstractWindowsCommand):
         # get process token
         token = process.get_token()
         if not token:
-            return False
+            return None
 
         if type(defaults['user']).__name__ == "function":
             res = defaults['user'](process, token)
@@ -1313,7 +1323,6 @@ class malprocfind(common.AbstractWindowsCommand):
         for pid in list_all:
             if int(list_all[pid].InheritedFromUniqueProcessId) not in list_all:
                 list_wo_parent[pid] = list_all[pid]
-                print "Warning! No parent process! PID %d Offset: 0x%x Name: %s" % (int(list_wo_parent[pid].UniqueProcessId), int(list_wo_parent[pid].obj_offset), str(list_wo_parent[pid].ImageFileName))      
 
         #######################################
         # Determine boot time
@@ -1340,25 +1349,24 @@ class malprocfind(common.AbstractWindowsCommand):
         for pid in list_all:
             if str(list_all[pid].ImageFileName).lower() == "system":
                 system_count += 1
-                if system_count > 1: print "Warning! More than 1 system process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "smss.exe":
                 smss_count += 1
-                if smss_count > 1: print "Warning! More than 1 smss.exe process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "wininit.exe":
                 wininit_count += 1
-                if wininit_count > 1: print "Warning! More than 1 wininit.exe process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "lsass.exe":
                 lsass_count += 1
-                if lsass_count > 1: print "Warning! More than 1 lsass.exe process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "services.exe":
                 services_count += 1
-                if services_count > 1: print "Warning! More than 1 services.exe process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "explorer.exe":
                 explorer_count += 1
-                if explorer_count > 1: print "Warning! More than 1 explorer.exe process!"
+                
             if str(list_all[pid].ImageFileName).lower() == "winlogon.exe":
                 winlogon_count += 1
-                if winlogon_count > 1: print "Warning! More than 1 winlogon.exe process!"
                                 
         ######################################
         # Collect important system processes
@@ -1445,7 +1453,7 @@ class malprocfind(common.AbstractWindowsCommand):
                         }
                         break
                 if found: break
-            if not found: # if not system process execute only global checks
+            if not found and self._config.INCLALL: # if not system process execute only global checks
                 yield {
                     'process': list_all[p],
                     'offset' : list_all[p].obj_offset,
@@ -1463,6 +1471,25 @@ class malprocfind(common.AbstractWindowsCommand):
                     'phollow' : self.check_proc_hollowing(list_all[p]),
                     'spath' : self.check_proc_susp_path(list_all[p])
                 }
+        
+        print "\nUnusual process counts:"
+        print "-----------------------"
+        
+        if system_count > 1: print "Warning! More than 1 system process! (%d) (!!!ABNORMAL!!!)" % system_count
+        if smss_count > 1: print "Warning! More than 1 smss.exe process! (%d) (This might also be normal.)" % smss_count
+        if wininit_count > 1: print "Warning! More than 1 wininit.exe process! (%d) (!!!ABNORMAL!!!)" % wininit_count
+        if lsass_count > 1: print "Warning! More than 1 lsass.exe process! (%d) (!!!ABNORMAL!!!)" % services_count
+        if services_count > 1: print "Warning! More than 1 services.exe process! (%d) (!!!ABNORMAL!!!)" % services_count
+        if explorer_count > 1: print "Warning! More than 1 explorer.exe process! (%d) (That usually means that multiple users are logged in.)" % explorer_count
+        if winlogon_count > 1: print "Warning! More than 1 winlogon.exe process! (%d) (That usually means that multiple users are logged in.)" % winlogon_count
+        
+        print "\nProcesses without running parent process:"
+        print "-----------------------------------------"
+        
+        for pid in list_wo_parent:
+            print "PID %d Offset: 0x%x Name: %s" % (int(list_wo_parent[pid].UniqueProcessId), int(list_wo_parent[pid].obj_offset), str(list_wo_parent[pid].ImageFileName))
+        
+        
     
     def render_text(self, outfd, data):
         self.table_header(outfd, [
