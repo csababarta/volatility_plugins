@@ -60,7 +60,7 @@ verbose = False
 list_name_regexs = [
     # system
     ['system', [
-                    re.compile(r'system')
+                    re.compile(r'^system$')
                 ]
     ],
     
@@ -134,8 +134,8 @@ list_name_regexs = [
     # svchost.exe
     ['svchost', [
                     re.compile(r's..h.st\.exe|s.host\.exe', re.I),
-                    re.compile(r'.*s..h.st.exe', re.I),
-                    re.compile(r's..h.s.exe', re.I)
+                    re.compile(r'.*s..h.st.*\.exe', re.I),
+                    re.compile(r's..h.s\.exe', re.I)
                 ]
     ],
     
@@ -749,7 +749,7 @@ defaults = {
     'session'  : 'sessid == 0',
     'user' : ["S-1-5-18"],
     'parent' : wininit_parent_chk,
-    'time': 10
+    'time': 45
 },
 
 'lsass' : {
@@ -785,7 +785,7 @@ defaults = {
     'session'  : 'sessid > 0',
     'user' : ["S-1-5-18"],
     'parent' : winlogon_parent_chk,
-    'time': 60
+    'time': None
 },
 
 'explorer' : {
@@ -813,7 +813,7 @@ defaults = {
     'session'  : 'sessid == 0',
     'user' : ["S-1-5-18"],
     'parent' : services_parent_chk,
-    'time': 10
+    'time': 45
 },
 
 'lsm' : {
@@ -1072,6 +1072,7 @@ class malprocfind(common.AbstractWindowsCommand):
             return False
         
         if process.Peb.ProcessParameters == None:
+            print "Warning! It wasn't possible to complete the process path check! PID: %d Offset: 0x%x Name: %s" % (int(process.UniqueProcessId), int(process.obj_offset), str(process.ImageFileName))
             return False
         
         ok = False
@@ -1085,6 +1086,22 @@ class malprocfind(common.AbstractWindowsCommand):
             if type(p).__name__ == "function":
                 ok = p(process)
         return ok
+        
+    def check_proc_susp_path(self, process):
+		if int(process.UniqueProcessId) == 4:
+			return True
+
+		if process.Peb == None or \
+           process.Peb.ProcessParameters == None or \
+           process.Peb.ProcessParameters.ImagePathName == None:
+			return None
+
+		suspicious = False
+		for r in list_bad_paths:
+			if r.match(ntpath.dirname(str(process.Peb.ProcessParameters.ImagePathName).lower())):
+				suspicious = True
+		
+		return not suspicious
 
     # Checks the process parent
     def check_proc_parent(self, process, defaults):
@@ -1167,6 +1184,8 @@ class malprocfind(common.AbstractWindowsCommand):
             return ok
     
     def check_proc_time(self, process, defaults):
+    	global boot_time
+    
         if defaults['time'] == None:
             return True
         
@@ -1181,17 +1200,19 @@ class malprocfind(common.AbstractWindowsCommand):
            str(process.ImageFileName).lower() == "system":
             return True
             
-        if process.Peb == None: # we are not able to complete this step
-            print "Warning! It wasn't possible to complete the process hollowing check! PID: %d Offset: 0x%x Name: %s" % (int(process.UniqueProcessId), int(process.obj_offset), str(process.ImageFileName))
-            return True
+        if process.Peb == None or \
+           process.Peb.ProcessParameters == None or \
+           process.Peb.ProcessParameters.ImagePathName == None: # we are not able to complete this step
+            return None
         
         exe_name = str(process.Peb.ProcessParameters.ImagePathName).lower()
         
         found_exe = False
         exe_base = -1
         for m in process.get_load_modules():
-            if str(m.FullDllName).lower() == exe_name:
-                exe_base = m.DllBase.v()
+        	if m.FullDllName <> None:
+        		if str(m.FullDllName).lower() == exe_name:
+        			exe_base = m.DllBase.v()
         
         found_in_mem = False
         for m in process.get_mem_modules():
@@ -1219,23 +1240,34 @@ class malprocfind(common.AbstractWindowsCommand):
         
         return found_exe
         
+    def check_proc_started_by_cmd(self, process):
+		global list_all
+    	
+		if int(process.InheritedFromUniqueProcessId) in list_all:
+			if str(list_all[int(process.InheritedFromUniqueProcessId)].ImageFileName).lower() == "cmd.exe":
+				return False
+			else:
+				return True
+		else:
+			return True
+        
     # Wrapper function for all the tests
     # Returns a result dictionary with the results of each test
     def check_proc(self, process, name):
         global defaults
         
         res = {}
-        try:
-            res['name'] = self.check_proc_name(process,defaults[name])
-            res['parent'] = self.check_proc_parent(process, defaults[name])
-            res['path'] = self.check_proc_path(process,defaults[name])
-            res['priority'] = self.check_proc_priority(process,defaults[name])
-            res['cmdline'] = self.check_proc_cmdline(process, defaults[name])
-            res['session'] = self.check_proc_session(process, defaults[name])
-            res['user'] = self.check_proc_user(process, defaults[name])
-            res['time'] = self.check_proc_time(process, defaults[name])
-        except:
-            pass
+        res['name'] = self.check_proc_name(process,defaults[name])
+        res['parent'] = self.check_proc_parent(process, defaults[name])
+        res['path'] = self.check_proc_path(process,defaults[name])
+        res['priority'] = self.check_proc_priority(process,defaults[name])
+        res['cmdline'] = self.check_proc_cmdline(process, defaults[name])
+        res['session'] = self.check_proc_session(process, defaults[name])
+        res['user'] = self.check_proc_user(process, defaults[name])
+        res['time'] = self.check_proc_time(process, defaults[name])
+        res['cmd'] = self.check_proc_started_by_cmd(process)
+        res['phollow'] = self.check_proc_hollowing(process)
+        res['spath'] = self.check_proc_susp_path(process)
         
         return res
 
@@ -1253,6 +1285,10 @@ class malprocfind(common.AbstractWindowsCommand):
            info['priority'] and \
            info['user'] and \
            info['time']:
+            if info['cmd'] != None and not info['cmd']:
+                if info['phollow'] != None and not info['phollow']:
+                    if info['spath'] != None and not info['spath']:
+                        return False
             return True
         else:
             return False
@@ -1277,6 +1313,18 @@ class malprocfind(common.AbstractWindowsCommand):
         for pid in list_all:
             if int(list_all[pid].InheritedFromUniqueProcessId) not in list_all:
                 list_wo_parent[pid] = list_all[pid]
+                print "Warning! No parent process! PID %d Offset: 0x%x Name: %s" % (int(list_wo_parent[pid].UniqueProcessId), int(list_wo_parent[pid].obj_offset), str(list_wo_parent[pid].ImageFileName))      
+
+        #######################################
+        # Determine boot time
+        #######################################
+        for pid in list_all:
+            proc = list_all[pid]
+            if str(proc.ImageFileName).lower() == "smss.exe" and \
+               int(proc.InheritedFromUniqueProcessId) == 4:
+                boot_time = proc.CreateTime.v()
+        if boot_time == -1:
+            print "Warning! It wasn't possible to determine the boot time!"
                 
         #######################################
         # Check process counts
@@ -1287,6 +1335,7 @@ class malprocfind(common.AbstractWindowsCommand):
         lsass_count = 0
         services_count = 0
         explorer_count = 0
+        winlogon_count = 0
         
         for pid in list_all:
             if str(list_all[pid].ImageFileName).lower() == "system":
@@ -1307,48 +1356,10 @@ class malprocfind(common.AbstractWindowsCommand):
             if str(list_all[pid].ImageFileName).lower() == "explorer.exe":
                 explorer_count += 1
                 if explorer_count > 1: print "Warning! More than 1 explorer.exe process!"
-        
-        #######################################
-        # Determine boot time
-        #######################################
-        for pid in list_all:
-            proc = list_all[pid]
-            if str(proc.ImageFileName).lower() == "smss.exe" and \
-               int(proc.InheritedFromUniqueProcessId) == 4:
-                boot_time = proc.CreateTime.v()
-        if boot_time == -1:
-            print "Warning! It wasn't possible to determine the boot time!"
-        
-        #######################################
-        # Check processes started by cmd.exe
-        #######################################
-        for pid in list_all:
-            proc = list_all[pid]
-            if int(proc.InheritedFromUniqueProcessId) in list_all:
-                if str(list_all[int(proc.InheritedFromUniqueProcessId)].ImageFileName).lower() == "cmd.exe":
-                    print "Warning! Process started from commandline! PID: %d Offset: 0x%x Name: %s" % (int(proc.UniqueProcessId), int(proc.obj_offset), str(proc.ImageFileName))
-        
-        #######################################
-        # Check processes started from suspicious places
-        #######################################      
-        for pid in list_all:
-            if pid == 4:
-                continue
-            if list_all[pid].Peb == None:
-                    print "Warning! It wasn't possible to complete the suspicious path check! PID: %d Offset: 0x%x Name: %s" % (int(list_all[pid].UniqueProcessId), int(list_all[pid].obj_offset), str(list_all[pid].ImageFileName))
-                    continue
-            for r in list_bad_paths:
-                if r.match(ntpath.dirname(str(list_all[pid].Peb.ProcessParameters.ImagePathName).lower())):
-                    print "Warning! Process started from suspicious path! PID: %d Offset: 0x%x Name: %s" % (int(list_all[pid].UniqueProcessId), int(list_all[pid].obj_offset), str(proc.ImageFileName))
-        
-        #######################################
-        # Check process hollowing
-        #######################################
-        for pid in list_all:
-            proc = list_all[pid]
-            if not self.check_proc_hollowing(proc):
-                print "Warning! Process shows signs of process hollowing! PID: %d Offset: 0x%x Name: %s" % (int(list_all[pid].UniqueProcessId), int(list_all[pid].obj_offset), str(proc.ImageFileName))
-        
+            if str(list_all[pid].ImageFileName).lower() == "winlogon.exe":
+                winlogon_count += 1
+                if winlogon_count > 1: print "Warning! More than 1 winlogon.exe process!"
+                                
         ######################################
         # Collect important system processes
         # that do not have parents
@@ -1365,10 +1376,6 @@ class malprocfind(common.AbstractWindowsCommand):
                     list_sysprocs[pid] = list_wo_parent[pid]
                     if procname == "csrss.exe":
                         list_csrss[pid] = list_wo_parent[pid]
-                else:
-                    print "Warning! Seems to be a system process, but checks are not OK! PID %d Offset: 0x%x Name: %s" % (int(list_wo_parent[pid].UniqueProcessId), int(list_wo_parent[pid].obj_offset), procname)
-            else:
-                print "Warning! No parent process! PID %d Offset: 0x%x Name: %s" % (int(list_wo_parent[pid].UniqueProcessId), int(list_wo_parent[pid].obj_offset), procname)
         
         ######################################
         # Collect and check important system processes
@@ -1392,7 +1399,6 @@ class malprocfind(common.AbstractWindowsCommand):
                 if procname == "csrss.exe":
                     list_csrss[p] = list_all[p]
             else:
-                print "Warning! Seems to be a system process, but checks are not OK! PID %d Offset: 0x%x Name: %s" % (int(list_all[p].UniqueProcessId), int(list_all[p].obj_offset), procname)
                 to_remove.append(p)
         
         for p in to_remove:
@@ -1408,16 +1414,14 @@ class malprocfind(common.AbstractWindowsCommand):
                 if self.verify_proc(list_all[p], procname.split(".")[0]):
                     list_sysprocs[p] = list_all[p]
                     list_svchost[p] = list_all[p]
-                else:
-                    print "Warning! Seems to be a system process, but checks are not OK! PID %d Offset: 0x%x Name: %s" % (int(list_all[p].UniqueProcessId), int(list_all[p].obj_offset), procname)
         
         ######################################
         # Check all the processes
         ######################################
         for p in list_all:
             procname = str(list_all[p].ImageFileName).lower()
+            found = False
             for regexp in list_name_regexs:
-                found = False
                 for r in regexp[1]:
                     if r.match(procname):
                         found = True
@@ -1434,10 +1438,31 @@ class malprocfind(common.AbstractWindowsCommand):
                             'cmdline' : info['cmdline'],
                             'user' : info['user'],
                             'session' : info['session'],
-                            'time' : info['time']
+                            'time' : info['time'],
+                            'cmd' : info['cmd'],
+                            'phollow' : info['phollow'],
+                            'spath' : info['spath']
                         }
                         break
                 if found: break
+            if not found: # if not system process execute only global checks
+                yield {
+                    'process': list_all[p],
+                    'offset' : list_all[p].obj_offset,
+                    'procname' : procname,
+                    'pid' : p,
+                    'parent' : None,
+                    'name' : None,
+                    'path' : None,
+                    'priority' : None,
+                    'cmdline' : None,
+                    'user' : None,
+                    'session' : None,
+                    'time' : None,
+                    'cmd' : self.check_proc_started_by_cmd(list_all[p]),
+                    'phollow' : self.check_proc_hollowing(list_all[p]),
+                    'spath' : self.check_proc_susp_path(list_all[p])
+                }
     
     def render_text(self, outfd, data):
         self.table_header(outfd, [
@@ -1447,12 +1472,14 @@ class malprocfind(common.AbstractWindowsCommand):
                             ("PPID", "5"),
                             ("Name", "5"),
                             ("Path", "5"),
-        #                    ("Time", "5"),
                             ("Priority", "9"),
                             ("Cmdline","7"),
                             ("User","5"),
                             ("Sess","5"),
-                            ("Time", "5")
+                            ("Time", "5"),
+                            ("CMD", "5"),
+                            ("PHollow", "5"),
+                            ("SPath", "5")
                             ])  
         for p in data:
             self.table_row(outfd,
@@ -1466,27 +1493,32 @@ class malprocfind(common.AbstractWindowsCommand):
                 str(p['cmdline']),
                 str(p['user']),
                 str(p['session']),
-                str(p['time'])
+                str(p['time']),
+                str(p['cmd']),
+                str(p['phollow']),
+                str(p['spath'])
                 )
                 
             if self._config.VERBOSE:
-                if not p['parent']:
+                if p['parent'] != None and not p['parent']:
                     print "    PPID: %d" % int(p['process'].InheritedFromUniqueProcessId)
-                if not p['path']:
+                if p['path'] != None and not p['path']:
                     print "    Path: %s" % str(p['process'].Peb.ProcessParameters.ImagePathName).lower()
-                if not p['priority']:
+                if p['priority'] != None and not p['priority']:
                     print "    Priority: %d" % int(p['process'].Pcb.BasePriority)
-                if not p['cmdline']:
+                if p['cmdline'] != None and not p['cmdline']:
                     print "    CommandLine: %s" % str(p['process'].Peb.ProcessParameters.CommandLine).lower().strip()
-                if not p['user']:
+                if p['user'] != None and not p['user']:
                     try:
                         print "    User: %s" % str(p['process'].get_token().get_sids().next())
                     except:
                         pass
-                if not p['session']:
+                if p['session'] != None and not p['session']:
                     try:
                         print "    Session: %d" % int(obj.Object('_MM_SESSION_SPACE', p['process'].Session, utils.load_as(self._config)).SessionId)
                     except:
                         pass
-                if not p['time']:
+                if p['time'] != None and not p['time']:
                     print "    Time: %s" % p['process'].CreateTime
+                if p['spath'] != None and not p['spath']:
+                    print "    Path: %s" % str(p['process'].Peb.ProcessParameters.ImagePathName).lower()
