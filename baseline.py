@@ -116,7 +116,11 @@ class processbl(common.AbstractWindowsCommand):
             
             proc = None
             
-            if str(task.ImageFileName).lower() not in self.baseline_proc_list:
+            if task.Peb == None:
+                continue
+            
+            #if str(task.ImageFileName).lower() not in self.baseline_proc_list:
+            if str(task.Peb.ProcessParameters.ImagePathName).lower() not in self.baseline_proc_list:
                 # We haven't seen the process yet
                 # Let's create a new object and add it
                 proc = {
@@ -135,10 +139,12 @@ class processbl(common.AbstractWindowsCommand):
                         'vad' : {}  # vad list
                     }
                 }
-                self.baseline_proc_list[proc['image']] = proc
+                #self.baseline_proc_list[proc['image']] = proc
+                self.baseline_proc_list[proc['path']] = proc
             
             # Get process from our list
-            proc = self.baseline_proc_list[str(task.ImageFileName).lower()]
+            #proc = self.baseline_proc_list[str(task.ImageFileName).lower()]
+            proc = self.baseline_proc_list[str(task.Peb.ProcessParameters.ImagePathName).lower()]
             
             proc['pid'].append(task.UniqueProcessId)
             proc['ppid'].append(task.InheritedFromUniqueProcessId)
@@ -214,6 +220,9 @@ class processbl(common.AbstractWindowsCommand):
         dlllist = taskmods.DllList(self._config)
         
         for task in dlllist.calculate():
+            if task.Peb == None:
+                continue
+            
             proc = {
                 'pid'   : task.UniqueProcessId,
                 'ppid'  : task.InheritedFromUniqueProcessId,
@@ -281,77 +290,95 @@ class processbl(common.AbstractWindowsCommand):
         
         # Compare the lists
         for task in self.image_proc_list: # Check all the processes in the image
-            image = task['image']
+            #if task['path'] != '':
+            image = task['path']
+            #else:
+            #    image = task['image']
             p_found = False
             if image in self.baseline_proc_list: # If the process is found
                 task_bl = self.baseline_proc_list[image]
                 p_found = True
-                for m in task['dlls']['comb']:
-                    # Check if we have the dll in our combined list of the baseline
-                    m_found = False
-                    for m_bl in self.baseline_proc_list[image]['dlls']['comb']:
-                        if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['comb'][m_bl]['dll']:
-                            m_found = True
+                if self._config.VERBOSE:
+                    for m in task['dlls']['comb']:
+                        # Check if we have the dll in our combined list of the baseline
+                        m_found = False
+                        for m_bl in self.baseline_proc_list[image]['dlls']['comb']:
+                            if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['comb'][m_bl]['dll']:
+                                m_found = True
                     
-                    # Check in which lists we can find it in the baseline
-                    m_l = False
-                    for m_bl in self.baseline_proc_list[image]['dlls']['load']:
-                        if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['load'][m_bl]['dll']:
-                            m_l = True
+                        # Check in which lists we can find it in the baseline
+                        m_l = False
+                        for m_bl in self.baseline_proc_list[image]['dlls']['load']:
+                            if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['load'][m_bl]['dll']:
+                                m_l = True
                     
-                    m_i = False
-                    for m_bl in self.baseline_proc_list[image]['dlls']['init']:
-                        if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['init'][m_bl]['dll']:
-                            m_i = True
+                        m_i = False
+                        for m_bl in self.baseline_proc_list[image]['dlls']['init']:
+                            if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['init'][m_bl]['dll']:
+                                m_i = True
                     
-                    m_m = False
-                    for m_bl in self.baseline_proc_list[image]['dlls']['mem']:
-                        if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['mem'][m_bl]['dll']:
-                            m_m = True
+                        m_m = False
+                        for m_bl in self.baseline_proc_list[image]['dlls']['mem']:
+                            if task['dlls']['comb'][m]['dll'] == task_bl['dlls']['mem'][m_bl]['dll']:
+                                m_m = True
                     
-                    # Check in which lists we can find it in our image
-                    m_l_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['load']:
-                        m_l_i = True
+                        # Check in which lists we can find it in our image
+                        m_l_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['load']:
+                            m_l_i = True
                     
-                    m_i_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['init']:
-                        m_i_i = True
+                        m_i_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['init']:
+                            m_i_i = True
                     
-                    m_m_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['mem']:
-                        m_m_i = True
+                        m_m_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['mem']:
+                            m_m_i = True
                     
+                        if not self._config.ONLYKNOWN and not self._config.ONLYUNKNOWN:
+                            yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
+                    
+                        if self._config.ONLYKNOWN and m_found:
+                            yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
+                    
+                        if self._config.ONLYUNKNOWN and not m_found:
+                            yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
+                else:
                     if not self._config.ONLYKNOWN and not self._config.ONLYUNKNOWN:
-                        yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
-                    
+                        yield(task, p_found)
+                
                     if self._config.ONLYKNOWN and m_found:
-                        yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
-                    
+                        yield(task, p_found)
+                
                     if self._config.ONLYUNKNOWN and not m_found:
-                        yield(task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i)
+                        yield(task, p_found)
                     
             else: # The process is not in our baseline
                 m_found = False
-                for m in task['dlls']['comb']:
-                    m_l_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['load']:
-                        m_l_i = True
+                if self._config.VERBOSE:
+                    for m in task['dlls']['comb']:
+                        m_l_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['load']:
+                            m_l_i = True
                     
-                    m_i_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['init']:
-                        m_i_i = True
+                        m_i_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['init']:
+                            m_i_i = True
                     
-                    m_m_i = False
-                    if task['dlls']['comb'][m]['dll'] in task['dlls']['mem']:
-                        m_m_i = True
+                        m_m_i = False
+                        if task['dlls']['comb'][m]['dll'] in task['dlls']['mem']:
+                            m_m_i = True
                     
+                        if not self._config.ONLYKNOWN:
+                            yield(task, m, p_found, m_found, False, False, False, m_l_i, m_i_i, m_m_i)
+                else:
                     if not self._config.ONLYKNOWN:
-                        yield(task, m, p_found, m_found, False, False, False, m_l_i, m_i_i, m_m_i)
+                            yield(task, p_found)
     
     def render_text(self, outfd, data):
         """Renders the text-based output"""
-        self.table_header(outfd, [('Proc_Offset(I)(V)', '[addrpad]'),
+        if self._config.VERBOSE:
+            self.table_header(outfd, [('Proc_Offset(I)(V)', '[addrpad]'),
                                   ('Image name', '15'),
                                   ('PID(I)', '4'),
                                   ('PPID(I)', '4'),
@@ -368,8 +395,8 @@ class processbl(common.AbstractWindowsCommand):
                                   ('DLL image name(I)', '')
                                   ])
 
-        for task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i in data:
-            self.table_row(outfd,
+            for task, m, p_found, m_found, m_l, m_i, m_m, m_l_i, m_i_i, m_m_i in data:
+                self.table_row(outfd,
                          task['offset'],
                          task['image'],
                          task['pid'],
@@ -385,6 +412,24 @@ class processbl(common.AbstractWindowsCommand):
                          m_i, # Init list in baseline
                          m_m, # Mem list in baseline
                          task['dlls']['comb'][m]['dll']
+                         )
+        else:
+            self.table_header(outfd, [('Proc_Offset(I)(V)', '[addrpad]'),
+                                  ('Image name', '15'),
+                                  ('Image path', '50'),
+                                  ('PID(I)', '4'),
+                                  ('PPID(I)', '4'),
+                                  ('PFound(B)', '5')
+                                  ])
+
+            for task, p_found in data:
+                self.table_row(outfd,
+                         task['offset'],
+                         task['image'],
+                         task['path'],
+                         task['pid'],
+                         task['ppid'],
+                         str(p_found)
                          )
 
 ##########################################################################################
