@@ -999,7 +999,7 @@ class servicebl(common.AbstractWindowsCommand):
     def render_text(self, outfd, data):
         self.table_header(outfd, [
                             ("Offset", "[addrpad]"),
-                            ("Serice Name", "30"),
+                            ("Service Name", "30"),
                             ("PID", "5"),
                             ("Found", "5"),
                             ("DName", "5"),
