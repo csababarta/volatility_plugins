@@ -347,10 +347,10 @@ class processbl(common.AbstractWindowsCommand):
                     if not self._config.ONLYKNOWN and not self._config.ONLYUNKNOWN:
                         yield(task, p_found)
                 
-                    if self._config.ONLYKNOWN and m_found:
+                    if self._config.ONLYKNOWN and p_found:
                         yield(task, p_found)
                 
-                    if self._config.ONLYUNKNOWN and not m_found:
+                    if self._config.ONLYUNKNOWN and not p_found:
                         yield(task, p_found)
                     
             else: # The process is not in our baseline
