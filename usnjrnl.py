@@ -34,7 +34,6 @@ import re
 import volatility.constants
 import csv
 import sys
-import volatility.obj
 
 REASONSCODES = {
     0x00000001: 'Data in one or more named data streams for the file was overwritten.',
@@ -121,8 +120,7 @@ class USN_RECORD_V2(obj.CType):
     AttributeList = u"" 
     
     def __init__(self, theType, offset, vm, name = None, members = None, struct_size = 0, **kwargs):
-        volatility.obj.CType.__init__(self, theType, offset, vm, name, members, struct_size, **kwargs)
-        
+        obj.CType.__init__(self, theType, offset, vm, name, members, struct_size, **kwargs)
 
     @property
     def Reasons(self):
