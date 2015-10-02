@@ -371,7 +371,7 @@ class RCRDRegExCheck(scan.ScannerCheck):
 
 
 class LOGFILE(common.AbstractWindowsCommand):
-    """ Scans for and parses potential INDX entries """
+    """ Scans for and parses potential $Logfile entries """
     def __init__(self, config, *args, **kwargs):
         common.AbstractWindowsCommand.__init__(self, config, *args, **kwargs)
         config.add_option("DEBUGOUT", default = False,
