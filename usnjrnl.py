@@ -187,15 +187,13 @@ class USN_RECORD_V2(obj.CType):
 
     def __str__(self):
         if self.isValid:
-            print "TimeStamp: " + str(self.TimeStamp)
-            print "MFT Rec. Nr.: " + str(self.FileReferenceNumber.RecordNumber)
-            print "Parent MFT Rec. Nr.: " + str(self.ParentFileReferenceNumber.RecordNumber)
-            print "USN: " + str(self.USN)
-            print "FileName: " + self.FileName.v().decode('utf-16')
-            print "AttributeCode: " + str(self.FileAttributes)
-            print "Attributes: " + self.AttributeList
-            print "ReasonCode: " + str(self.ReasonCode)
-            print "Reasons: " + self.ReasonList
+            return "{0}\t{1}\t{2}\t{3}\t{4}\t{5}".format(
+                str(self.TimeStamp),
+                str(self.FileReferenceNumber.RecordNumber),
+                str(self.ParentFileReferenceNumber.RecordNumber),
+                str(self.USN),
+                str(self.FileName.v().decode('utf-16')),
+                str(self.ReasonList))
         else:
             print "Corrupt entry"
         return ""
@@ -323,9 +321,9 @@ class USNJRNL(common.AbstractWindowsCommand):
 
     def render_text(self, outfd, data):
         for offset, usn_entry in data:
-            print "Offset: " + str(offset)
+            #print "Offset: " + str(offset)
             print str(usn_entry)
-            print "*" * 80
+            #print "*" * 80
     
     def render_body(self, outfd, data):
         print "This output method is only experimental"
